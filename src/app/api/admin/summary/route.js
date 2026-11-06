@@ -1,7 +1,7 @@
 import { collections, imageStorageBytes } from '@/lib/db';
 import { adminOnly, validDay } from '@/lib/admin';
-import { dayOf } from '@/lib/time';
-import { dayState } from '@/lib/work';
+import { addDays, dayOf } from '@/lib/time';
+import { dayState, OPEN_STATUSES } from '@/lib/work';
 
 const MAX_ALERTS = 20;
 
@@ -12,12 +12,15 @@ export async function GET(request) {
   const today = dayOf(new Date());
   const requested = request.nextUrl.searchParams.get('day');
   const day = validDay(requested) ? requested : today;
+  // Today also looks at yesterday, for night shifts that are still running.
+  const yesterday = addDays(today, -1);
+  const days = day === today ? [yesterday, today] : [day];
   const { drivers, photos } = await collections();
 
   const [list, entries, breakdowns, storageBytes] = await Promise.all([
     drivers.find().sort({ name: 1 }).toArray(),
     photos
-      .find({ day }, { projection: { driverId: 1, type: 1, capturedAt: 1, resolved: 1, lat: 1, lng: 1, place: 1, late: 1, lowAccuracy: 1 } })
+      .find({ day: { $in: days } }, { projection: { day: 1, driverId: 1, type: 1, capturedAt: 1, resolved: 1, lat: 1, lng: 1, place: 1, late: 1, lowAccuracy: 1 } })
       .sort({ capturedAt: 1 })
       .toArray(),
     photos.find({ type: 'breakdown', resolved: { $ne: true } }).sort({ capturedAt: -1 }).limit(MAX_ALERTS).toArray(),
@@ -26,24 +29,30 @@ export async function GET(request) {
 
   const byDriver = new Map();
   for (const entry of entries) {
-    const key = entry.driverId.toString();
+    const key = `${entry.driverId}|${entry.day}`;
     byDriver.set(key, [...(byDriver.get(key) ?? []), entry]);
   }
 
   const rows = list
     .filter((driver) => {
-      const key = driver._id.toString();
+      const key = `${driver._id}|${day}`;
       return byDriver.has(key) || (driver.active && dayOf(driver.createdAt) <= day);
     })
     .map((driver) => {
-      const own = byDriver.get(driver._id.toString()) ?? [];
+      const dayEntries = byDriver.get(`${driver._id}|${day}`) ?? [];
+      const night = byDriver.get(`${driver._id}|${yesterday}`) ?? [];
+      const fromNight = day === today && !dayEntries.length && OPEN_STATUSES.includes(dayState(night).status);
+      const own = fromNight ? night : dayEntries;
+      const shiftDay = fromNight ? yesterday : day;
+      const { status } = dayState(own);
       const located = own.findLast((entry) => entry.lat !== null);
       return {
         id: driver._id,
         name: driver.name,
         phone: driver.phone,
         vehicle: driver.vehicle,
-        status: dayState(own, day === today).status,
+        day: shiftDay,
+        status,
         count: own.length,
         first: own[0]?.capturedAt ?? null,
         last: own.at(-1)?.capturedAt ?? null,

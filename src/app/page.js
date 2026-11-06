@@ -2,21 +2,25 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addPhoto, listPhotos, preparePhoto, removePhoto } from '@/lib/photoQueue';
-import { dayOf, dubaiDate, TIME_ZONE } from '@/lib/time';
-import { STATUS_LABELS, WORK_LABELS } from '@/lib/work';
+import { dayOf, dubaiDate, shiftTime, TIME_ZONE, timeOf } from '@/lib/time';
+import { MAX_SHIFT_MS, STATUS_LABELS, WORK_LABELS } from '@/lib/work';
 
 const RETRY_MS = 30_000;
 const FIX_MAX_AGE_MS = 2 * 60 * 1000;
 const NEW_PHOTO_MS = 2 * 60 * 1000;
 const WEAK_GPS_METERS = 100;
 const REPEAT_MS = 2 * 60 * 1000;
-const TIME_FORMAT = { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: true };
 
 function isToday(entry) {
   return Boolean(entry) && dayOf(new Date(entry.capturedAt)) === dayOf(new Date());
 }
 
-const timeText = (at) => new Date(at).toLocaleTimeString('en-GB', TIME_FORMAT);
+// A started shift stays open after midnight, so a night shift keeps its buttons and photo count.
+function isWorking(me) {
+  return Boolean(me.working) && Date.now() - new Date(me.shiftStartedAt).getTime() < MAX_SHIFT_MS;
+}
+
+const isCurrent = (me) => isWorking(me) || isToday(me.last);
 const dayText = (day) =>
   dubaiDate(day, '12:00').toLocaleDateString('en-GB', { timeZone: TIME_ZONE, weekday: 'short', day: 'numeric', month: 'short' });
 
@@ -82,7 +86,7 @@ function DayDetail({ summary, onBack, onLoggedOut }) {
           {!entry.manual && <img src={`/api/me/photos/${entry._id}`} alt={WORK_LABELS[entry.type]} loading="lazy" />}
           <div>
             <b>{WORK_LABELS[entry.type]}</b>
-            <span>{timeText(entry.capturedAt)}</span>
+            <span>{shiftTime(entry.capturedAt, summary.day)}</span>
             {entry.place && <p>{entry.place}</p>}
             {entry.note && <p>{entry.note}</p>}
             {entry.manual && <p>Added by admin</p>}
@@ -141,7 +145,7 @@ function Attendance({ pending, onBack, onLoggedOut }) {
                 <span>
                   <b>{dayText(day.day)}</b>
                   <small>
-                    {day.count > 0 ? `${timeText(day.first)} to ${timeText(day.last)}` : 'No photo'}
+                    {day.count > 0 ? `${shiftTime(day.first, day.day)} to ${shiftTime(day.last, day.day)}` : 'No photo'}
                     {day.hours && `, ${day.hours} hours`}
                   </small>
                 </span>
@@ -356,12 +360,12 @@ function Home({ me, setMe }) {
       setPending((count) => count + 1);
       setMe((current) => {
         if (!current) return current;
-        const sameDay = isToday(current.last);
         return {
           ...current,
           last: { type, capturedAt },
-          todayCount: (sameDay ? current.todayCount : 0) + 1,
-          working: type === 'start' || (type !== 'end' && sameDay && current.working),
+          todayCount: (isCurrent(current) ? current.todayCount : 0) + 1,
+          working: type === 'start' || (type !== 'end' && isWorking(current)),
+          shiftStartedAt: type === 'start' ? capturedAt : current.shiftStartedAt,
         };
       });
       showToast(navigator.onLine ? 'Photo saved ✓' : 'Saved. Will send when internet comes.');
@@ -391,8 +395,8 @@ function Home({ me, setMe }) {
   }[gps];
   const repeated = review && me.last?.type === review.type &&
     review.capturedAt - new Date(me.last.capturedAt).getTime() < REPEAT_MS;
-  const last = isToday(me.last) ? me.last : null;
-  const working = Boolean(last) && Boolean(me.working);
+  const last = isCurrent(me) ? me.last : null;
+  const working = isWorking(me);
   const needsNote = review?.type === 'other' && !review.note.trim();
 
   if (showAttendance) return <Attendance pending={pending} onBack={closeAttendance} onLoggedOut={onLoggedOut} />;
@@ -476,7 +480,7 @@ function Home({ me, setMe }) {
       </section>
       {last && (
         <p className="last-sent">
-          Last: {WORK_LABELS[last.type]}, {timeText(last.capturedAt)}
+          Last: {WORK_LABELS[last.type]}, {timeOf(last.capturedAt)}
         </p>
       )}
       <button className="ghost my-attendance" onClick={() => setShowAttendance(true)}>My Attendance</button>

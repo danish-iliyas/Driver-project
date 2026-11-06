@@ -1,8 +1,8 @@
 import { collections } from '@/lib/db';
 import { adminOnly, parseId, validDay } from '@/lib/admin';
 import { fillMissingPlaces } from '@/lib/places';
-import { dayOf, timeOf } from '@/lib/time';
-import { dayState, STATUS_LABELS, WORK_LABELS } from '@/lib/work';
+import { dayOf, shiftTime } from '@/lib/time';
+import { daySummary, STATUS_LABELS, WORK_LABELS } from '@/lib/work';
 
 const MAX_DAYS = 92;
 // Each missing name takes a second to look up, so one report fills only a few.
@@ -14,6 +14,14 @@ function csvCell(value) {
   const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
   return `"${safe.replaceAll('"', '""')}"`;
 }
+
+const entryFlags = (shot) =>
+  [
+    shot.manual && 'Added by admin',
+    shot.editedAt && 'Edited by admin',
+    shot.late && 'Late upload',
+    shot.lowAccuracy && 'Weak GPS',
+  ].filter(Boolean);
 
 function daysBetween(from, to) {
   const days = [];
@@ -55,38 +63,45 @@ export async function GET(request) {
     byKey.set(key, [...(byKey.get(key) ?? []), shot]);
   }
 
-  const rows = [['Driver', 'Mobile', 'Vehicle', 'Date', 'Status', 'Day hours', 'Entry no.', 'Time', 'Work', 'Driver note', 'Place', 'Map link', 'Flags']];
+  const shifts = [];
   for (const driver of list) {
     for (const day of days) {
-      const dayShots = byKey.get(`${driver._id}|${day}`);
-      const base = [driver.name, driver.phone, driver.vehicle, day];
-      if (!dayShots) {
-        if (day >= dayOf(driver.createdAt) && driver.active) rows.push([...base, 'Absent', '', '', '', '', '', '', '', '']);
-        continue;
-      }
-      const { status, hours } = dayState(dayShots, day === today);
-      dayShots.forEach((shot, index) => {
-        const flags = [
-          shot.manual && 'Added by admin',
-          shot.editedAt && 'Edited by admin',
-          shot.late && 'Late upload',
-          shot.lowAccuracy && 'Weak GPS',
-        ].filter(Boolean);
-        const located = shot.lat !== null;
-        rows.push([
-          ...base,
-          STATUS_LABELS[status],
-          hours,
-          index + 1,
-          timeOf(shot.capturedAt),
-          WORK_LABELS[shot.type],
-          shot.note,
-          located ? (shot.place ?? `${shot.lat.toFixed(5)}, ${shot.lng.toFixed(5)}`) : '',
-          located ? `https://www.google.com/maps?q=${shot.lat},${shot.lng}` : '',
-          flags.join(', '),
-        ]);
-      });
+      const dayShots = byKey.get(`${driver._id}|${day}`) ?? [];
+      if (dayShots.length || (day >= dayOf(driver.createdAt) && driver.active)) shifts.push({ driver, day, dayShots });
     }
+  }
+
+  // One row per driver per day. Each entry gets its own columns, so a day with more photos is wider.
+  const most = Math.max(0, ...shifts.map((shift) => shift.dayShots.length));
+  const header = ['Driver', 'Mobile', 'Vehicle', 'Date', 'Status', 'Start time', 'End time', 'Hours', 'Photos', 'Flags'];
+  for (let n = 1; n <= most; n++) header.push(`Photo ${n}`, `Photo ${n} map`);
+
+  const rows = [header];
+  for (const { driver, day, dayShots } of shifts) {
+    const summary = daySummary(day, dayShots);
+    const flags = new Set(dayShots.flatMap(entryFlags));
+    const row = [
+      driver.name,
+      driver.phone,
+      driver.vehicle,
+      day,
+      STATUS_LABELS[summary.status],
+      shiftTime(summary.start, day),
+      shiftTime(summary.end, day),
+      summary.hours,
+      dayShots.length,
+      [...flags].join(', '),
+    ];
+    for (const shot of dayShots) {
+      const located = shot.lat !== null;
+      const place = located ? (shot.place ?? `${shot.lat.toFixed(5)}, ${shot.lng.toFixed(5)}`) : '';
+      const extra = entryFlags(shot).filter((flag) => flag !== 'Weak GPS' && flag !== 'Late upload');
+      row.push(
+        [`${shiftTime(shot.capturedAt, day)} ${WORK_LABELS[shot.type]}`, place, shot.note, ...extra].filter(Boolean).join(' | '),
+        located ? `https://www.google.com/maps?q=${shot.lat},${shot.lng}` : '',
+      );
+    }
+    rows.push(row);
   }
 
   const label = driverId && list[0] ? list[0].name.replace(/[^\w-]+/g, '-') : 'all-drivers';

@@ -1,7 +1,6 @@
 import { collections } from '@/lib/db';
 import { fail } from '@/lib/auth';
-import { adminOnly, clean, parseId, validTime } from '@/lib/admin';
-import { dubaiDate } from '@/lib/time';
+import { adminOnly, clean, entryTime, parseId } from '@/lib/admin';
 import { WORK_LABELS } from '@/lib/work';
 
 export async function PATCH(request, { params }) {
@@ -22,9 +21,9 @@ export async function PATCH(request, { params }) {
   }
   if ('note' in body) set.note = clean(body.note);
   if ('time' in body) {
-    if (!validTime(body.time)) return fail(400, 'Enter the time');
-    set.capturedAt = dubaiDate(photo.day, body.time);
-    if (set.capturedAt > new Date()) return fail(400, 'Time cannot be in the future');
+    const at = entryTime(photo.day, body.time, body.nextDay);
+    if (typeof at === 'string') return fail(400, at);
+    set.capturedAt = at;
   }
   const edited = Object.keys(set).length > 0;
   if (edited) set.editedAt = new Date();

@@ -36,7 +36,7 @@ export async function GET(request, { params }) {
     const day = `${month}-${String(n).padStart(2, '0')}`;
     const own = byDay.get(day) ?? [];
     if (day > today || (!own.length && day < joined)) continue;
-    days.push(daySummary(day, own, today));
+    days.push(daySummary(day, own));
   }
   return Response.json(days);
 }

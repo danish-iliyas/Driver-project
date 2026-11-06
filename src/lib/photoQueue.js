@@ -60,7 +60,7 @@ export async function preparePhoto(file, { name, type, lat, lng, at }) {
   const size = Math.max(16, Math.round(canvas.width / 38));
   const lines = [
     `${name} • ${WORK_LABELS[type]}`,
-    new Date(at).toLocaleString('en-GB', { timeZone: TIME_ZONE }),
+    new Date(at).toLocaleString('en-GB', { timeZone: TIME_ZONE, hourCycle: 'h23' }),
     `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
   ];
   context.fillStyle = 'rgba(0, 0, 0, 0.65)';

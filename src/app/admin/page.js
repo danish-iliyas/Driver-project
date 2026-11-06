@@ -2,33 +2,47 @@
 
 import 'leaflet/dist/leaflet.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { TIME_ZONE } from '@/lib/time';
+import { addDays, dayOf, dubaiDate, shiftTime, TIME_ZONE, timeOf } from '@/lib/time';
 import { STATUS_LABELS, WORK_LABELS } from '@/lib/work';
 
-const time = (value) =>
-  value ? new Date(value).toLocaleTimeString('en-GB', { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
-const clock = (value) =>
-  new Date(value).toLocaleTimeString('en-GB', { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false });
+// day marks times after midnight of that shift date as "(next day)".
+const time = (value, day) => shiftTime(value, day) || '—';
 const statusLabel = (status, day) =>
   status === 'absent' && day === todayText() ? 'Not started' : STATUS_LABELS[status];
 const DUBAI_CENTER = [25.2048, 55.2708];
 const todayText = () => new Date().toLocaleDateString('en-CA', { timeZone: TIME_ZONE });
 
-function shiftDay(day, by) {
-  const date = new Date(`${day}T12:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + by);
-  return date.toISOString().slice(0, 10);
-}
-
 function DayNav({ day, setDay }) {
   const today = todayText();
   return (
     <div className="day-nav">
-      <button className="ghost" aria-label="Previous day" onClick={() => setDay(shiftDay(day, -1))}>‹</button>
+      <button className="ghost" aria-label="Previous day" onClick={() => setDay(addDays(day, -1))}>‹</button>
       <input type="date" aria-label="Day" value={day} max={today} onChange={(e) => e.target.value && setDay(e.target.value)} />
-      <button className="ghost" aria-label="Next day" disabled={day >= today} onClick={() => setDay(shiftDay(day, 1))}>›</button>
+      <button className="ghost" aria-label="Next day" disabled={day >= today} onClick={() => setDay(addDays(day, 1))}>›</button>
       <button className="ghost" disabled={day === today} onClick={() => setDay(today)}>Today</button>
     </div>
+  );
+}
+
+const pad = (n) => String(n).padStart(2, '0');
+const HOURS = Array.from({ length: 24 }, (_, n) => pad(n));
+const MINUTES = Array.from({ length: 60 }, (_, n) => pad(n));
+
+// The browser time box follows the computer's 12 or 24 hour setting, so hour and minute are picked here.
+function TimeInput({ value, onChange }) {
+  const [hour = '', minute = ''] = value ? value.split(':') : [];
+  return (
+    <span className="time-input">
+      <select aria-label="Hour" required value={hour} onChange={(e) => onChange(`${e.target.value}:${minute}`)}>
+        <option value="" disabled>HH</option>
+        {HOURS.map((h) => <option key={h} value={h}>{h}</option>)}
+      </select>
+      <b>:</b>
+      <select aria-label="Minute" required value={minute} onChange={(e) => onChange(`${hour}:${e.target.value}`)}>
+        <option value="" disabled>MM</option>
+        {MINUTES.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+    </span>
   );
 }
 
@@ -86,7 +100,8 @@ function MapView({ points, route = false, onPick }) {
         marker.bindPopup(popup);
         if (onPick) marker.on('click', () => onPick(point));
       });
-      if (coords.length) map.fitBounds(coords, { padding: [40, 40], maxZoom: 14 });
+      // No animation: leaving the page during a zoom animation breaks Leaflet.
+      if (coords.length) map.fitBounds(coords, { padding: [40, 40], maxZoom: 14, animate: false });
     }
     const element = box.current;
     draw();
@@ -124,7 +139,7 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
   const count = (status) => data.rows.filter((row) => row.status === status).length;
   const points = data.rows
     .filter((row) => row.lat !== null)
-    .map((row) => ({ lat: row.lat, lng: row.lng, label: `${row.name} • ${time(row.last)} • ${row.place ?? ''}` }));
+    .map((row) => ({ lat: row.lat, lng: row.lng, label: `${row.name} • ${time(row.last, row.day)} • ${row.place ?? ''}` }));
 
   return (
     <>
@@ -142,7 +157,7 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
           <h2>Breakdowns ({data.alerts.length})</h2>
           {data.alerts.map((alert) => (
             <div className="alert-row" key={alert.id}>
-              <span>{alert.driver} • {alert.day} {time(alert.capturedAt)} • {alert.place ?? 'Finding place…'}</span>
+              <span>{alert.driver} • {alert.day} {time(alert.capturedAt, alert.day)} • {alert.place ?? 'Finding place…'}</span>
               <button className="ghost" onClick={() => onOpen(alert.driverId, alert.day)}>Open</button>
               <button className="primary" onClick={() => resolve(alert)}>Resolved</button>
             </div>
@@ -162,12 +177,15 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
             </thead>
             <tbody>
               {data.rows.map((row) => (
-                <tr className="link" key={row.id} onClick={() => onOpen(row.id)}>
+                <tr className="link" key={row.id} onClick={() => onOpen(row.id, row.day)}>
                   <td>{row.name}</td>
                   <td>{row.vehicle}</td>
-                  <td><span className={`badge ${row.status}`}>{statusLabel(row.status, day)}</span></td>
-                  <td>{time(row.first)}</td>
-                  <td>{time(row.last)}</td>
+                  <td>
+                    <span className={`badge ${row.status}`}>{statusLabel(row.status, day)}</span>
+                    {row.day !== day && <small className="note"> Night shift from {row.day}</small>}
+                  </td>
+                  <td>{time(row.first, row.day)}</td>
+                  <td>{time(row.last, row.day)}</td>
                   <td>{row.place ?? '—'}</td>
                   <td>{row.count}</td>
                   <td>{row.flagged || '—'}</td>
@@ -186,7 +204,7 @@ function DriverDay({ id, day, setDay, onBack }) {
   const [data, setData] = useState(null);
   const [days, setDays] = useState([]);
   const [version, setVersion] = useState(0);
-  const blank = { id: null, type: 'start', time: '', note: '', oldTime: '' };
+  const blank = { id: null, type: 'start', time: '', note: '', nextDay: false, oldAt: null };
   const [entry, setEntry] = useState(blank);
   const [error, setError] = useState('');
   const month = day.slice(0, 7);
@@ -206,12 +224,22 @@ function DriverDay({ id, day, setDay, onBack }) {
         .map((photo) => ({
           lat: photo.lat,
           lng: photo.lng,
-          label: `${time(photo.capturedAt)} • ${WORK_LABELS[photo.type]} • ${photo.place ?? ''}`,
+          label: `${time(photo.capturedAt, day)} • ${WORK_LABELS[photo.type]} • ${photo.place ?? ''}`,
         })),
-    [data],
+    [data, day],
   );
   const dayRow = days.find((row) => row.day === day);
   const missing = { 'start-missing': 'start', 'end-missing': 'end' }[dayRow?.status];
+  const startAt = data?.photos.findLast((photo) => photo.type === 'start' && dayOf(photo.capturedAt) === day)?.capturedAt;
+
+  // A time earlier than START on this date is after midnight, so the next date is ticked for it.
+  function changeEntry(change) {
+    const next = { ...entry, ...change };
+    if (startAt && /^\d\d:\d\d$/.test(next.time) && next.type !== 'start' && ('time' in change || 'type' in change)) {
+      next.nextDay = next.time < timeOf(startAt);
+    }
+    setEntry(next);
+  }
 
   async function saveEntry(event) {
     event.preventDefault();
@@ -219,10 +247,11 @@ function DriverDay({ id, day, setDay, onBack }) {
     try {
       if (entry.id) {
         const body = { type: entry.type, note: entry.note };
-        if (entry.time !== entry.oldTime) body.time = entry.time;
+        const at = dubaiDate(entry.nextDay ? addDays(day, 1) : day, entry.time);
+        if (at.getTime() !== new Date(entry.oldAt).getTime()) Object.assign(body, { time: entry.time, nextDay: entry.nextDay });
         await send(`/api/admin/photos/${entry.id}`, 'PATCH', body);
       } else {
-        await send(`/api/admin/drivers/${id}/entries`, 'POST', { day, type: entry.type, time: entry.time, note: entry.note });
+        await send(`/api/admin/drivers/${id}/entries`, 'POST', { day, type: entry.type, time: entry.time, nextDay: entry.nextDay, note: entry.note });
       }
       setEntry(blank);
       setVersion((value) => value + 1);
@@ -232,13 +261,19 @@ function DriverDay({ id, day, setDay, onBack }) {
   }
 
   function editEntry(photo) {
-    const at = clock(photo.capturedAt);
-    setEntry({ id: photo._id, type: photo.type, time: at, oldTime: at, note: photo.note ?? '' });
+    setEntry({
+      id: photo._id,
+      type: photo.type,
+      time: timeOf(photo.capturedAt),
+      nextDay: dayOf(photo.capturedAt) !== day,
+      oldAt: photo.capturedAt,
+      note: photo.note ?? '',
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function deleteEntry(photo) {
-    const label = `${WORK_LABELS[photo.type]} at ${time(photo.capturedAt)}`;
+    const label = `${WORK_LABELS[photo.type]} at ${time(photo.capturedAt, day)}`;
     if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
     await send(`/api/admin/photos/${photo._id}`, 'DELETE').catch((e) => setError(e.message));
     setVersion((value) => value + 1);
@@ -256,18 +291,24 @@ function DriverDay({ id, day, setDay, onBack }) {
         <h2>{entry.id ? 'Edit entry' : `Add entry for ${day}`}</h2>
         {missing && !entry.id && (
           <div className="warn">
-            {STATUS_LABELS[dayRow.status]}
+            {dayRow.status === 'start-missing'
+              ? 'Start missing. Hours count only from Start to End, so add Start Work.'
+              : 'End missing. Add End Work to finish this day and count hours.'}
             <button className="ghost" onClick={() => setEntry({ ...blank, type: missing })}>Add {WORK_LABELS[missing]}</button>
           </div>
         )}
         <form className="form" onSubmit={saveEntry}>
           <label className="field">
             Work
-            <select value={entry.type} onChange={(e) => setEntry({ ...entry, type: e.target.value })}>
+            <select name="work" value={entry.type} onChange={(e) => changeEntry({ type: e.target.value })}>
               {Object.entries(WORK_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </label>
-          <label className="field">Time<input type="time" required value={entry.time} onChange={(e) => setEntry({ ...entry, time: e.target.value })} /></label>
+          <div className="field">Time (24 hour)<TimeInput value={entry.time} onChange={(time) => changeEntry({ time })} /></div>
+          <label className="check">
+            <input type="checkbox" checked={entry.nextDay} onChange={(e) => setEntry({ ...entry, nextDay: e.target.checked })} />
+            Next day (after 12 at night), {addDays(day, 1)}
+          </label>
           <label className="field">Note<input maxLength={80} value={entry.note} onChange={(e) => setEntry({ ...entry, note: e.target.value })} /></label>
           <button className="primary">{entry.id ? 'Save' : 'Add entry'}</button>
           {entry.id && <button type="button" className="ghost" onClick={() => setEntry(blank)}>Cancel</button>}
@@ -287,11 +328,11 @@ function DriverDay({ id, day, setDay, onBack }) {
                 <p className="no-photo">No photo</p>
               ) : (
                 <a href={`/api/admin/photos/${photo._id}/image`} target="_blank" rel="noreferrer">
-                  <img src={`/api/admin/photos/${photo._id}/image`} alt={`${WORK_LABELS[photo.type]} at ${time(photo.capturedAt)}`} loading="lazy" />
+                  <img src={`/api/admin/photos/${photo._id}/image`} alt={`${WORK_LABELS[photo.type]} at ${time(photo.capturedAt, day)}`} loading="lazy" />
                 </a>
               )}
               <div>
-                {time(photo.capturedAt)} • {WORK_LABELS[photo.type]}
+                {time(photo.capturedAt, day)} • {WORK_LABELS[photo.type]}
                 {photo.note && <em>{photo.note}</em>}
                 {photo.lat !== null && <em>{photo.place ?? `${photo.lat.toFixed(5)}, ${photo.lng.toFixed(5)}`}</em>}
                 {photo.manual && <small>Added by admin</small>}
@@ -312,14 +353,14 @@ function DriverDay({ id, day, setDay, onBack }) {
         <h2>Day wise ({month})</h2>
         <div className="scroll">
           <table>
-            <thead><tr><th>Date</th><th>Status</th><th>First</th><th>Last</th><th>Hours</th><th>Entries</th></tr></thead>
+            <thead><tr><th>Date</th><th>Status</th><th>Start</th><th>End</th><th>Hours</th><th>Entries</th></tr></thead>
             <tbody>
               {days.map((row) => (
                 <tr className={`link ${row.day === day ? 'selected' : ''}`} key={row.day} onClick={() => setDay(row.day)}>
                   <td>{row.day}</td>
                   <td><span className={`badge ${row.status}`}>{statusLabel(row.status, row.day)}</span></td>
-                  <td>{time(row.first)}</td>
-                  <td>{time(row.last)}</td>
+                  <td>{time(row.start, row.day)}</td>
+                  <td>{time(row.end, row.day)}</td>
                   <td>{row.hours || '—'}</td>
                   <td>{row.count}</td>
                 </tr>
@@ -470,7 +511,7 @@ function Report() {
           Download Excel file (CSV)
         </a>
       </div>
-      <p className="empty">One row for each entry, with time, work, note, place and map link. Maximum 92 days.</p>
+      <p className="empty">One row for each driver for each day, with start, end and hours. Each photo has its own column with time, work, place, note and map link. Times are 24 hour. Maximum 92 days.</p>
     </section>
   );
 }

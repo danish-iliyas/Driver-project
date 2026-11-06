@@ -15,7 +15,6 @@ export async function GET() {
   if (!driver) return fail(401, 'Please log in');
 
   const now = Date.now();
-  const today = dayOf(new Date(now));
   const oldest = dayOf(new Date(now - (HISTORY_DAYS - 1) * DAY_MS));
   const entries = await photos
     .find({ driverId, day: { $gte: oldest } }, { projection: { day: 1, type: 1, capturedAt: 1, resolved: 1 } })
@@ -31,7 +30,7 @@ export async function GET() {
     const day = dayOf(new Date(now - n * DAY_MS));
     const own = byDay.get(day) ?? [];
     if (!own.length && day < joined) continue;
-    days.push(daySummary(day, own, today));
+    days.push(daySummary(day, own, now));
   }
   return Response.json(days);
 }

@@ -3,7 +3,7 @@ import { Binary, ObjectId } from 'mongodb';
 import { collections } from '@/lib/db';
 import { fail, getSession } from '@/lib/auth';
 import { savePlace } from '@/lib/places';
-import { dayOf } from '@/lib/time';
+import { shiftDayFor } from '@/lib/shift';
 import { WORK_LABELS } from '@/lib/work';
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
@@ -50,6 +50,7 @@ export async function POST(request) {
   const receivedAt = new Date();
   const capturedAt = new Date(receivedAt.getTime() - ageMs);
   const _id = new ObjectId();
+  const day = await shiftDayFor(photos, driverId, type, capturedAt);
 
   await photoBlobs.insertOne({ _id, contentType: 'image/jpeg', data: new Binary(bytes) });
   try {
@@ -66,7 +67,7 @@ export async function POST(request) {
       late: ageMs > LATE_AFTER_MS,
       capturedAt,
       receivedAt,
-      day: dayOf(capturedAt),
+      day,
       size: bytes.length,
     });
   } catch (err) {

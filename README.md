@@ -1,6 +1,6 @@
 # Driver Tracker
 
-Drivers log in on their phone, start work with a photo, send Loading, Unloading, Breakdown or Other photos, and end work with a photo. Each photo saves the time and GPS location. Drivers can see their own attendance, hours and photos for the last 30 days. The admin sees status, breakdown alerts, routes on a map, photos and a report, and can add, edit or delete any entry. All times use Dubai time, and a shift that crosses midnight counts as two days.
+Drivers log in on their phone, start work with a photo, send Loading, Unloading, Breakdown or Other photos, and end work with a photo. Each photo saves the time and GPS location. Drivers can see their own attendance, hours and photos for the last 30 days. The admin sees status, breakdown alerts, routes on a map, photos and a report, and can add, edit or delete any entry. All times use Dubai time and a 24 hour clock. A night shift belongs to the date it started: entries after midnight stay on that date while the shift is open (up to 18 hours after START), and the admin can add an entry for "Next day" when a driver forgot END after midnight. The report has one row per driver per day, with a column for each photo.
 
 ## Run on this computer
 

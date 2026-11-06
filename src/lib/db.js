@@ -12,6 +12,7 @@ async function connect() {
     db.collection('photos').createIndex({ driverId: 1, clientId: 1 }, { unique: true }),
     db.collection('photos').createIndex({ driverId: 1, day: 1, capturedAt: 1 }),
     db.collection('photos').createIndex({ day: 1, capturedAt: 1 }),
+    db.collection('photos').createIndex({ driverId: 1, capturedAt: -1 }),
   ]);
   return db;
 }

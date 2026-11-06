@@ -1,5 +1,6 @@
 import { collections } from '@/lib/db';
 import { fail, getSession } from '@/lib/auth';
+import { isOpen, lastMarker } from '@/lib/shift';
 import { dayOf } from '@/lib/time';
 
 export async function GET() {
@@ -8,12 +9,25 @@ export async function GET() {
   const { drivers, photos } = await collections();
   const driver = await drivers.findOne({ _id: session.driverId, active: true });
   if (!driver) return fail(401, 'Please log in');
-  const today = { driverId: driver._id, day: dayOf(new Date()) };
-  const [todayCount, last, shift] = await Promise.all([
-    photos.countDocuments(today),
-    photos.findOne(today, { sort: { capturedAt: -1 }, projection: { _id: 0, type: 1, capturedAt: 1 } }),
-    photos.findOne({ ...today, type: { $in: ['start', 'end'] } }, { sort: { capturedAt: -1 }, projection: { type: 1 } }),
+
+  const now = new Date();
+  const today = dayOf(now);
+  const marker = await lastMarker(photos, driver._id, now);
+  const working = isOpen(marker, now);
+  // An open night shift, or one that ended this morning, still shows its own photos.
+  const endedToday = marker?.type === 'end' && dayOf(marker.capturedAt) === today;
+  const shift = { driverId: driver._id, day: working || endedToday ? marker.day : today };
+  const [todayCount, last] = await Promise.all([
+    photos.countDocuments(shift),
+    photos.findOne(shift, { sort: { capturedAt: -1 }, projection: { _id: 0, type: 1, capturedAt: 1 } }),
   ]);
-  const working = shift?.type === 'start';
-  return Response.json({ id: driver._id, name: driver.name, vehicle: driver.vehicle, todayCount, last, working });
+  return Response.json({
+    id: driver._id,
+    name: driver.name,
+    vehicle: driver.vehicle,
+    todayCount,
+    last,
+    working,
+    shiftStartedAt: working ? marker.capturedAt : null,
+  });
 }
