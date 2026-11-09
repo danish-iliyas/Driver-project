@@ -54,9 +54,13 @@ export function dayState(entries, now = Date.now()) {
   return { status: quiet ? 'quiet' : 'working', hours };
 }
 
+// A driver is present on a day when that day has a START, whether sent by the driver or added by the admin.
+export const isPresent = (entries) => entries.some((entry) => entry.type === 'start');
+
 export function daySummary(day, entries, now = Date.now()) {
   return {
     day,
+    present: isPresent(entries),
     ...dayState(entries, now),
     count: entries.length,
     first: entries[0]?.capturedAt ?? null,

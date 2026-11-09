@@ -115,8 +115,8 @@ function Attendance({ pending, onBack, onLoggedOut }) {
   if (selected) return <DayDetail summary={selected} onBack={() => setSelected(null)} onLoggedOut={onLoggedOut} />;
 
   const today = dayOf(new Date());
-  const worked = days?.filter((day) => day.count > 0).length ?? 0;
-  const absent = days?.filter((day) => day.count === 0 && day.day !== today).length ?? 0;
+  const worked = days?.filter((day) => day.present).length ?? 0;
+  const absent = days?.filter((day) => !day.present && day.day !== today).length ?? 0;
   const hours = days?.reduce((total, day) => total + Number(day.hours), 0) ?? 0;
 
   return (
@@ -135,7 +135,7 @@ function Attendance({ pending, onBack, onLoggedOut }) {
       {days && (
         <>
           <section className="stats three">
-            <div className="stat"><b>{worked}</b><span>Days worked</span></div>
+            <div className="stat"><b>{worked}</b><span>Present</span></div>
             <div className="stat"><b>{absent}</b><span>Absent</span></div>
             <div className="stat"><b>{hours.toFixed(1)}</b><span>Hours</span></div>
           </section>

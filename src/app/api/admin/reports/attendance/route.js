@@ -73,7 +73,7 @@ export async function GET(request) {
 
   // One row per driver per day. Each entry gets its own columns, so a day with more photos is wider.
   const most = Math.max(0, ...shifts.map((shift) => shift.dayShots.length));
-  const header = ['Driver', 'Mobile', 'Vehicle', 'Date', 'Status', 'Start time', 'End time', 'Hours', 'Photos', 'Flags'];
+  const header = ['Driver', 'Mobile', 'Vehicle', 'Date', 'Attendance', 'Status', 'Start time', 'End time', 'Hours', 'Photos', 'Flags'];
   for (let n = 1; n <= most; n++) header.push(`Photo ${n}`, `Photo ${n} map`);
 
   const rows = [header];
@@ -85,6 +85,7 @@ export async function GET(request) {
       driver.phone,
       driver.vehicle,
       day,
+      summary.present ? 'Present' : 'Absent',
       STATUS_LABELS[summary.status],
       shiftTime(summary.start, day),
       shiftTime(summary.end, day),

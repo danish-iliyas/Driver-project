@@ -353,11 +353,12 @@ function DriverDay({ id, day, setDay, onBack }) {
         <h2>Day wise ({month})</h2>
         <div className="scroll">
           <table>
-            <thead><tr><th>Date</th><th>Status</th><th>Start</th><th>End</th><th>Hours</th><th>Entries</th></tr></thead>
+            <thead><tr><th>Date</th><th>Attendance</th><th>Status</th><th>Start</th><th>End</th><th>Hours</th><th>Entries</th></tr></thead>
             <tbody>
               {days.map((row) => (
                 <tr className={`link ${row.day === day ? 'selected' : ''}`} key={row.day} onClick={() => setDay(row.day)}>
                   <td>{row.day}</td>
+                  <td><span className={`badge ${row.present ? 'present' : 'absent'}`}>{row.present ? 'Present' : 'Absent'}</span></td>
                   <td><span className={`badge ${row.status}`}>{statusLabel(row.status, row.day)}</span></td>
                   <td>{time(row.start, row.day)}</td>
                   <td>{time(row.end, row.day)}</td>
@@ -511,7 +512,7 @@ function Report() {
           Download Excel file (CSV)
         </a>
       </div>
-      <p className="empty">One row for each driver for each day, with start, end and hours. Each photo has its own column with time, work, place, note and map link. Times are 24 hour. Maximum 92 days.</p>
+      <p className="empty">One row for each driver for each day, with Present or Absent (Present when the day has a Start Work), start, end and hours. Each photo has its own column with time, work, place, note and map link. Times are 24 hour. Maximum 92 days.</p>
     </section>
   );
 }
