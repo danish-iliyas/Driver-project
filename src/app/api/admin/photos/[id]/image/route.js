@@ -1,12 +1,13 @@
 import { collections } from '@/lib/db';
 import { fail } from '@/lib/auth';
-import { adminOnly, parseId } from '@/lib/admin';
+import { ownPhoto, parseId, requireAdmin } from '@/lib/admin';
 
 export async function GET(request, { params }) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
-  const _id = parseId((await params).id);
-  if (!_id) return fail(404, 'Not found');
+  const photo = await ownPhoto(admin, parseId((await params).id));
+  if (!photo) return fail(404, 'Not found');
+  const { _id } = photo;
 
   const { photoBlobs } = await collections();
   const blob = await photoBlobs.findOne({ _id });

@@ -3,7 +3,7 @@
 import 'leaflet/dist/leaflet.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, dayOf, dubaiDate, shiftTime, TIME_ZONE, timeOf } from '@/lib/time';
-import { STATUS_LABELS, WORK_LABELS } from '@/lib/work';
+import { dayState, OPEN_STATUSES, STATUS_LABELS, WORK_LABELS } from '@/lib/work';
 
 // day marks times after midnight of that shift date as "(next day)".
 const time = (value, day) => shiftTime(value, day) || '—';
@@ -60,7 +60,31 @@ async function api(path, options) {
 const send = (path, method, body) =>
   api(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-// points: { lat, lng, label, photoId? }. A route joins them in order.
+// Points with weaker GPS than this are left off the route.
+const ROUTE_ACCURACY_METERS = 300;
+// A working driver with no new location for this long has probably closed the app.
+const NO_UPDATE_MS = 15 * 60 * 1000;
+const MARKERS = {
+  photo: { radius: 8, color: '#0a0d14', weight: 2, fillColor: '#e8c26e', fillOpacity: 1 },
+  track: { radius: 4, color: '#5aa9ff', weight: 1, fillColor: '#5aa9ff', fillOpacity: 0.9 },
+  now: { radius: 10, color: '#0a0d14', weight: 3, fillColor: '#3ddc97', fillOpacity: 1 },
+};
+
+// The super admin picks whose drivers to show. "none" is the super admin's own drivers.
+function AdminFilter({ admins, value, onChange }) {
+  return (
+    <label className="field inline">
+      Admin
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">All admins</option>
+        <option value="none">Super Admin (own drivers)</option>
+        {admins.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+// points: { lat, lng, label, kind? } where kind is photo (default), track or now. A route joins them in order.
 function MapView({ points, route = false, onPick }) {
   const box = useRef(null);
   const state = useRef(null);
@@ -91,12 +115,10 @@ function MapView({ points, route = false, onPick }) {
       layer.clearLayers();
       const coords = points.map((p) => [p.lat, p.lng]);
       if (route && coords.length > 1) L.polyline(coords, { color: '#e8c26e', weight: 3 }).addTo(layer);
-      points.forEach((point, index) => {
-        const marker = L.circleMarker([point.lat, point.lng], {
-          radius: 8, color: '#0a0d14', weight: 2, fillColor: '#e8c26e', fillOpacity: 1,
-        }).addTo(layer);
+      points.forEach((point) => {
+        const marker = L.circleMarker([point.lat, point.lng], MARKERS[point.kind ?? 'photo']).addTo(layer);
         const popup = document.createElement('div');
-        popup.textContent = route ? `${index + 1}. ${point.label}` : point.label;
+        popup.textContent = point.label;
         marker.bindPopup(popup);
         if (onPick) marker.on('click', () => onPick(point));
       });
@@ -112,14 +134,15 @@ function MapView({ points, route = false, onPick }) {
   return <div className="map" ref={box} />;
 }
 
-function Dashboard({ onOpen, day, setDay, onExpired }) {
+function Dashboard({ onOpen, day, setDay, onExpired, me, admins }) {
   const [data, setData] = useState(null);
   const [version, setVersion] = useState(0);
+  const [only, setOnly] = useState('');
 
   useEffect(() => {
     let live = true;
     const load = () =>
-      api(`/api/admin/summary?day=${day}`)
+      api(`/api/admin/summary?${new URLSearchParams({ day, ...(only && { admin: only }) })}`)
         .then((result) => live && setData(result))
         .catch((error) => error.status === 401 && onExpired());
     load();
@@ -128,7 +151,7 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
       live = false;
       clearInterval(timer);
     };
-  }, [day, onExpired, version]);
+  }, [day, onExpired, version, only]);
 
   async function resolve(alert) {
     await send(`/api/admin/photos/${alert.id}`, 'PATCH', { resolved: true }).catch(() => {});
@@ -139,18 +162,28 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
   const count = (status) => data.rows.filter((row) => row.status === status).length;
   const points = data.rows
     .filter((row) => row.lat !== null)
-    .map((row) => ({ lat: row.lat, lng: row.lng, label: `${row.name} • ${time(row.last, row.day)} • ${row.place ?? ''}` }));
+    .map((row) => ({
+      lat: row.lat,
+      lng: row.lng,
+      kind: OPEN_STATUSES.includes(row.status) ? 'now' : 'photo',
+      label: `${row.name} • ${time(row.seenAt, row.day)}`,
+    }));
+  const noUpdate = (row) =>
+    OPEN_STATUSES.includes(row.status) && (!row.seenAt || Date.now() - new Date(row.seenAt).getTime() > NO_UPDATE_MS);
 
   return (
     <>
-      <div className="bar"><DayNav day={day} setDay={setDay} /></div>
+      <div className="bar">
+        <DayNav day={day} setDay={setDay} />
+        {me.isSuper && <AdminFilter admins={admins} value={only} onChange={setOnly} />}
+      </div>
       <section className="kpis">
         <div className="kpi"><span>Drivers</span><b>{data.rows.length}</b></div>
         <div className="kpi"><span>Working</span><b>{count('working') + count('quiet') + count('breakdown')}</b></div>
         <div className="kpi"><span>Finished</span><b>{count('finished')}</b></div>
         <div className="kpi"><span>{day === data.today ? 'Not started' : 'Absent'}</span><b>{count('absent')}</b></div>
         <div className="kpi"><span>To fix</span><b>{count('start-missing') + count('end-missing')}</b></div>
-        <div className="kpi"><span>Image storage</span><b>{(data.storageBytes / 1024 ** 3).toFixed(2)} GB</b></div>
+        {data.storageBytes !== null && <div className="kpi"><span>Image storage</span><b>{(data.storageBytes / 1024 ** 3).toFixed(2)} GB</b></div>}
       </section>
       {data.alerts.length > 0 && (
         <section className="panel danger">
@@ -165,7 +198,7 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
         </section>
       )}
       <section className="panel">
-        <h2>Last location of each driver</h2>
+        <h2>Last location of each driver <small className="legend">Green: working now</small></h2>
         <MapView points={points} />
       </section>
       <section className="panel">
@@ -173,7 +206,7 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
         <div className="scroll">
           <table>
             <thead>
-              <tr><th>Driver</th><th>Vehicle</th><th>Status</th><th>First photo</th><th>Last photo</th><th>Last place</th><th>Photos</th><th>Flags</th></tr>
+              <tr><th>Driver</th><th>Vehicle</th><th>Status</th><th>First photo</th><th>Last photo</th><th>Last seen</th><th>Last place</th><th>Photos</th><th>Flags</th></tr>
             </thead>
             <tbody>
               {data.rows.map((row) => (
@@ -186,6 +219,10 @@ function Dashboard({ onOpen, day, setDay, onExpired }) {
                   </td>
                   <td>{time(row.first, row.day)}</td>
                   <td>{time(row.last, row.day)}</td>
+                  <td>
+                    {time(row.seenAt, row.day)}
+                    {noUpdate(row) && <small className="note late">No update 15 min+. App closed?</small>}
+                  </td>
                   <td>{row.place ?? '—'}</td>
                   <td>{row.count}</td>
                   <td>{row.flagged || '—'}</td>
@@ -210,24 +247,37 @@ function DriverDay({ id, day, setDay, onBack }) {
   const month = day.slice(0, 7);
 
   useEffect(() => {
-    api(`/api/admin/drivers/${id}/day?day=${day}`).then(setData).catch(() => setData(null));
+    const load = () => api(`/api/admin/drivers/${id}/day?day=${day}`).then(setData).catch(() => setData(null));
+    load();
+    // Recent days can still have a running shift, so the route keeps moving.
+    if (day < addDays(todayText(), -1)) return;
+    const timer = setInterval(load, 60_000);
+    return () => clearInterval(timer);
   }, [id, day, version]);
 
   useEffect(() => {
     api(`/api/admin/drivers/${id}/days?month=${month}`).then(setDays).catch(() => setDays([]));
   }, [id, month, version]);
 
-  const points = useMemo(
-    () =>
-      (data?.photos ?? [])
-        .filter((photo) => photo.lat !== null)
-        .map((photo) => ({
-          lat: photo.lat,
-          lng: photo.lng,
-          label: `${time(photo.capturedAt, day)} • ${WORK_LABELS[photo.type]} • ${photo.place ?? ''}`,
-        })),
-    [data, day],
-  );
+  // Photos and live location points together, in time order.
+  const points = useMemo(() => {
+    const photoPoints = (data?.photos ?? [])
+      .filter((photo) => photo.lat !== null)
+      .map((photo) => ({
+        lat: photo.lat,
+        lng: photo.lng,
+        at: photo.capturedAt,
+        label: `${time(photo.capturedAt, day)} • ${WORK_LABELS[photo.type]} • ${photo.place ?? ''}`,
+      }));
+    const trackPoints = (data?.track ?? [])
+      .filter((point) => point.accuracy <= ROUTE_ACCURACY_METERS)
+      .map((point) => ({ lat: point.lat, lng: point.lng, at: point.at, kind: 'track', label: `${time(point.at, day)} • Live location` }));
+    const all = [...photoPoints, ...trackPoints].sort((a, b) => new Date(a.at) - new Date(b.at));
+    const last = all.at(-1);
+    if (last && OPEN_STATUSES.includes(dayState(data.photos).status)) all[all.length - 1] = { ...last, kind: 'now', label: `Now: ${last.label}` };
+    return all;
+  }, [data, day]);
+  const lastSeen = points.at(-1)?.at;
   const dayRow = days.find((row) => row.day === day);
   const missing = { 'start-missing': 'start', 'end-missing': 'end' }[dayRow?.status];
   const startAt = data?.photos.findLast((photo) => photo.type === 'start' && dayOf(photo.capturedAt) === day)?.capturedAt;
@@ -316,7 +366,11 @@ function DriverDay({ id, day, setDay, onBack }) {
         {error && <p className="error" role="alert" style={{ padding: '0 18px 18px' }}>{error}</p>}
       </section>
       <section className="panel">
-        <h2>Route: {points.length} stops</h2>
+        <h2>
+          Route: {data?.photos.filter((photo) => photo.lat !== null).length ?? 0} photos, {data?.track.length ?? 0} live points
+          {lastSeen && ` • Last seen ${time(lastSeen, day)}`}
+          <small className="legend">Gold: photo • Blue: live location • Green: now</small>
+        </h2>
         <MapView points={points} route />
       </section>
       <section className="panel">
@@ -374,8 +428,8 @@ function DriverDay({ id, day, setDay, onBack }) {
   );
 }
 
-function Drivers() {
-  const empty = { name: '', phone: '', vehicle: '', pin: '' };
+function Drivers({ me, admins }) {
+  const empty = { name: '', phone: '', vehicle: '', pin: '', adminId: '' };
   const [list, setList] = useState([]);
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
@@ -416,7 +470,7 @@ function Drivers() {
 
   function startEdit(driver) {
     setEditingId(driver._id);
-    setForm({ name: driver.name, phone: driver.phone, vehicle: driver.vehicle, pin: '' });
+    setForm({ name: driver.name, phone: driver.phone, vehicle: driver.vehicle, pin: '', adminId: '' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -446,6 +500,15 @@ function Drivers() {
           {input('phone', 'Mobile number', { inputMode: 'tel' })}
           {input('vehicle', 'Vehicle number')}
           {!editingId && input('pin', '4 digit PIN', { inputMode: 'numeric', maxLength: 4 })}
+          {me.isSuper && !editingId && (
+            <label className="field">
+              Admin
+              <select value={form.adminId} onChange={(e) => setForm({ ...form, adminId: e.target.value })}>
+                <option value="">Super Admin (own)</option>
+                {admins.filter((item) => item.active).map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}
+              </select>
+            </label>
+          )}
           <button className="primary">{editingId ? 'Save' : 'Add driver'}</button>
           {editingId && <button type="button" className="ghost" onClick={cancelEdit}>Cancel</button>}
         </form>
@@ -455,13 +518,26 @@ function Drivers() {
         <h2>All drivers ({list.length})</h2>
         <div className="scroll">
           <table>
-            <thead><tr><th>Name</th><th>Mobile</th><th>Vehicle</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Mobile</th><th>Vehicle</th>{me.isSuper && <th>Admin</th>}<th>Status</th><th>Actions</th></tr></thead>
             <tbody>
               {list.map((driver) => (
                 <tr key={driver._id}>
                   <td>{driver.name}</td>
                   <td>{driver.phone}</td>
                   <td>{driver.vehicle}</td>
+                  {me.isSuper && (
+                    <td>
+                      <select
+                        className="cell-select"
+                        aria-label={`Admin of ${driver.name}`}
+                        value={driver.adminId ?? ''}
+                        onChange={(e) => change(driver, { adminId: e.target.value || null })}
+                      >
+                        <option value="">Super Admin</option>
+                        {admins.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}
+                      </select>
+                    </td>
+                  )}
                   <td><span className={`badge ${driver.active ? 'present' : 'off'}`}>{driver.active ? 'Active' : 'Disabled'}</span></td>
                   <td>
                     <div className="row-actions">
@@ -482,23 +558,26 @@ function Drivers() {
   );
 }
 
-function Report() {
+function Report({ me, admins }) {
   const today = todayText();
   const [drivers, setDrivers] = useState([]);
   const [driver, setDriver] = useState('');
+  const [only, setOnly] = useState('');
   const [from, setFrom] = useState(`${today.slice(0, 7)}-01`);
   const [to, setTo] = useState(today);
 
   useEffect(() => {
-    api('/api/admin/drivers').then(setDrivers).catch(() => {});
-  }, []);
+    setDriver('');
+    api(`/api/admin/drivers?${new URLSearchParams(only ? { admin: only } : {})}`).then(setDrivers).catch(() => {});
+  }, [only]);
 
-  const query = new URLSearchParams({ from, to, ...(driver && { driver }) });
+  const query = new URLSearchParams({ from, to, ...(driver && { driver }), ...(only && { admin: only }) });
 
   return (
     <section className="panel">
       <h2>Download report</h2>
       <div className="form">
+        {me.isSuper && <AdminFilter admins={admins} value={only} onChange={setOnly} />}
         <label className="field">
           Driver
           <select value={driver} onChange={(e) => setDriver(e.target.value)}>
@@ -517,8 +596,93 @@ function Report() {
   );
 }
 
+// Super admin only: admins who each manage their own drivers.
+function Admins({ admins, reload }) {
+  const empty = { name: '', username: '', password: '' };
+  const [form, setForm] = useState(empty);
+  const [error, setError] = useState('');
+
+  async function run(action) {
+    setError('');
+    try {
+      await action();
+      reload();
+      return true;
+    } catch (e) {
+      setError(e.message);
+      return false;
+    }
+  }
+
+  async function add(event) {
+    event.preventDefault();
+    if (await run(() => send('/api/admin/admins', 'POST', form))) setForm(empty);
+  }
+
+  function rename(admin) {
+    const name = window.prompt(`New name for ${admin.name}`, admin.name);
+    if (name) run(() => send(`/api/admin/admins/${admin._id}`, 'PATCH', { name }));
+  }
+
+  function resetPassword(admin) {
+    const password = window.prompt(`New password for ${admin.name} (at least 8 characters)`);
+    if (password) run(() => send(`/api/admin/admins/${admin._id}`, 'PATCH', { password }));
+  }
+
+  const input = (key, label, props) => (
+    <label className="field">
+      {label}
+      <input required value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} {...props} />
+    </label>
+  );
+
+  return (
+    <>
+      <section className="panel">
+        <h2>Add admin</h2>
+        <form className="form" onSubmit={add}>
+          {input('name', 'Name')}
+          {input('username', 'Username', { autoCapitalize: 'none', autoComplete: 'off' })}
+          {input('password', 'Password (8+ characters)', { type: 'password', autoComplete: 'new-password', minLength: 8 })}
+          <button className="primary">Add admin</button>
+        </form>
+        {error && <p className="error" role="alert" style={{ padding: '0 18px 18px' }}>{error}</p>}
+        <p className="empty">An admin logs in at this same page and sees only their own drivers. Give drivers to an admin in the Drivers tab.</p>
+      </section>
+      <section className="panel">
+        <h2>All admins ({admins.length})</h2>
+        <div className="scroll">
+          <table>
+            <thead><tr><th>Name</th><th>Username</th><th>Drivers</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {admins.map((admin) => (
+                <tr key={admin._id}>
+                  <td>{admin.name}</td>
+                  <td>{admin.username}</td>
+                  <td>{admin.drivers}</td>
+                  <td><span className={`badge ${admin.active ? 'present' : 'off'}`}>{admin.active ? 'Active' : 'Disabled'}</span></td>
+                  <td>
+                    <div className="row-actions">
+                      <button className="ghost" onClick={() => rename(admin)}>Edit name</button>
+                      <button className="ghost" onClick={() => resetPassword(admin)}>Reset password</button>
+                      <button className="ghost" onClick={() => run(() => send(`/api/admin/admins/${admin._id}`, 'PATCH', { active: !admin.active }))}>
+                        {admin.active ? 'Disable' : 'Enable'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!admins.length && <p className="empty">No admins yet.</p>}
+      </section>
+    </>
+  );
+}
+
 function AdminLogin({ onLogin }) {
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
@@ -537,7 +701,7 @@ function AdminLogin({ onLogin }) {
     <main className="admin-login">
       <form className="login-card" onSubmit={submit}>
         <div><div className="brand">Driver Tracker</div><h1>Admin</h1></div>
-        <label className="field">Username<input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+        <label className="field">Username<input autoComplete="username" autoCapitalize="none" required value={username} onChange={(e) => setUsername(e.target.value)} /></label>
         <label className="field">Password<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {error && <p className="error" role="alert">{error}</p>}
         <button className="primary">Login</button>
@@ -547,24 +711,36 @@ function AdminLogin({ onLogin }) {
 }
 
 export default function AdminPage() {
-  const [authed, setAuthed] = useState(null);
+  // undefined: checking, null: logged out, else { name, isSuper }.
+  const [me, setMe] = useState(undefined);
+  const [admins, setAdmins] = useState([]);
   const [tab, setTab] = useState('dashboard');
   const [openDriver, setOpenDriver] = useState(null);
   const [day, setDay] = useState(todayText);
 
-  const expire = useCallback(() => setAuthed(false), []);
+  const expire = useCallback(() => setMe(null), []);
+  const loadMe = useCallback(() => api('/api/admin/me').then(setMe).catch(() => setMe(null)), []);
+  const loadAdmins = useCallback(() => api('/api/admin/admins').then(setAdmins).catch(() => setAdmins([])), []);
 
   useEffect(() => {
-    api('/api/admin/drivers').then(() => setAuthed(true)).catch(() => setAuthed(false));
-  }, []);
+    loadMe();
+  }, [loadMe]);
 
-  if (authed === null) return null;
-  if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />;
+  useEffect(() => {
+    if (me?.isSuper) loadAdmins();
+  }, [me, loadAdmins]);
+
+  if (me === undefined) return null;
+  if (!me) return <AdminLogin onLogin={loadMe} />;
 
   async function logout() {
     await api('/api/admin/logout', { method: 'POST' }).catch(() => {});
-    setAuthed(false);
+    setMe(null);
+    setTab('dashboard');
+    setOpenDriver(null);
   }
+
+  const tabs = [['dashboard', 'Dashboard'], ['drivers', 'Drivers'], ['report', 'Report'], ...(me.isSuper ? [['admins', 'Admins']] : [])];
 
   function openDay(id, nextDay) {
     if (nextDay) setDay(nextDay);
@@ -574,15 +750,17 @@ export default function AdminPage() {
   function pick(next) {
     setOpenDriver(null);
     setTab(next);
+    // Driver counts change when drivers move between admins.
+    if (me.isSuper) loadAdmins();
   }
 
   return (
     <main className="admin">
       <header className="bar">
-        <div><div className="brand">Driver Tracker</div><h1>Admin</h1></div>
+        <div><div className="brand">Driver Tracker</div><h1>{me.isSuper ? 'Super Admin' : me.name}</h1></div>
         <span className="spacer" />
         <nav className="tabs">
-          {[['dashboard', 'Dashboard'], ['drivers', 'Drivers'], ['report', 'Report']].map(([key, label]) => (
+          {tabs.map(([key, label]) => (
             <button key={key} className={tab === key && !openDriver ? 'on' : ''} onClick={() => pick(key)}>{label}</button>
           ))}
         </nav>
@@ -591,11 +769,13 @@ export default function AdminPage() {
       {openDriver ? (
         <DriverDay id={openDriver} day={day} setDay={setDay} onBack={() => setOpenDriver(null)} />
       ) : tab === 'dashboard' ? (
-        <Dashboard onOpen={openDay} day={day} setDay={setDay} onExpired={expire} />
+        <Dashboard onOpen={openDay} day={day} setDay={setDay} onExpired={expire} me={me} admins={admins} />
       ) : tab === 'drivers' ? (
-        <Drivers />
+        <Drivers me={me} admins={admins} />
+      ) : tab === 'admins' ? (
+        <Admins admins={admins} reload={loadAdmins} />
       ) : (
-        <Report />
+        <Report me={me} admins={admins} />
       )}
     </main>
   );

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addPhoto, listPhotos, preparePhoto, removePhoto } from '@/lib/photoQueue';
+import { queuePoint, sendPoints } from '@/lib/trackQueue';
 import { dayOf, dubaiDate, shiftTime, TIME_ZONE, timeOf } from '@/lib/time';
 import { MAX_SHIFT_MS, STATUS_LABELS, WORK_LABELS } from '@/lib/work';
 
@@ -10,6 +11,8 @@ const FIX_MAX_AGE_MS = 2 * 60 * 1000;
 const NEW_PHOTO_MS = 2 * 60 * 1000;
 const WEAK_GPS_METERS = 100;
 const REPEAT_MS = 2 * 60 * 1000;
+const TRACK_MS = 5 * 60 * 1000;
+const TRACK_CHECK_MS = 60 * 1000;
 
 function isToday(entry) {
   return Boolean(entry) && dayOf(new Date(entry.capturedAt)) === dayOf(new Date());
@@ -219,6 +222,9 @@ function Home({ me, setMe }) {
   const input = useRef(null);
   const photoType = useRef('loading');
   const flushing = useRef(false);
+  const fixRef = useRef(null);
+  const lastPointAt = useRef(0);
+  fixRef.current = fix;
 
   const showToast = useCallback((text, bad = false) => {
     setToast({ text, bad });
@@ -263,6 +269,8 @@ function Home({ me, setMe }) {
         await removePhoto(item.clientId);
         setPending((count) => count - 1);
       }
+      // Location points go after the photos, so the server already has the START they belong to.
+      await sendPoints(me.id);
     } catch {
       // No signal: the photos stay queued for the next try.
     } finally {
@@ -399,6 +407,32 @@ function Home({ me, setMe }) {
   const working = isWorking(me);
   const needsNote = review?.type === 'other' && !review.note.trim();
 
+  // Live location every 5 minutes from START to END, only while this app is open on the screen.
+  useEffect(() => {
+    if (!working) return;
+    async function track() {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastPointAt.current < TRACK_MS - TRACK_CHECK_MS / 2) return;
+      lastPointAt.current = Date.now();
+      const position = await freshPosition(fixRef.current);
+      if (!position) {
+        lastPointAt.current = 0;
+        return;
+      }
+      const { lat, lng, accuracy } = position;
+      queuePoint({ id: crypto.randomUUID(), driverId: me.id, lat, lng, accuracy, at: Date.now() });
+      flush();
+    }
+    track();
+    // Checked every minute, because a phone slows down timers of a page it hides.
+    const timer = setInterval(track, TRACK_CHECK_MS);
+    document.addEventListener('visibilitychange', track);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', track);
+    };
+  }, [working, me.id, flush]);
+
   if (showAttendance) return <Attendance pending={pending} onBack={closeAttendance} onLoggedOut={onLoggedOut} />;
 
   if (review) {
@@ -446,6 +480,7 @@ function Home({ me, setMe }) {
         </div>
       )}
       {pending > 0 && <p className="warn">{pending} photo waiting. Open this app when internet comes.</p>}
+      {working && <p className="tracking"><span className="dot" />Live location on. Keep this app open.</p>}
 
       {working ? (
         <section className="actions working">

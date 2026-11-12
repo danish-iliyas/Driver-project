@@ -1,5 +1,5 @@
 import { collections } from '@/lib/db';
-import { adminOnly, parseId, validDay } from '@/lib/admin';
+import { driverScope, parseId, requireAdmin, validDay } from '@/lib/admin';
 import { fillMissingPlaces } from '@/lib/places';
 import { dayOf, shiftTime } from '@/lib/time';
 import { daySummary, STATUS_LABELS, WORK_LABELS } from '@/lib/work';
@@ -36,7 +36,7 @@ function daysBetween(from, to) {
 }
 
 export async function GET(request) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
 
   const query = request.nextUrl.searchParams;
@@ -46,10 +46,15 @@ export async function GET(request) {
   const to = requestedTo > today ? today : requestedTo;
   const driverId = parseId(query.get('driver'));
 
-  const { drivers, photos } = await collections();
-  const list = await drivers.find(driverId ? { _id: driverId } : {}).sort({ name: 1 }).toArray();
+  const { admins, drivers, photos } = await collections();
+  const scope = { ...driverScope(admin, query.get('admin')), ...(driverId && { _id: driverId }) };
+  const list = await drivers.find(scope).sort({ name: 1 }).toArray();
   const days = daysBetween(from, to);
-  const match = { day: { $gte: from, $lte: days.at(-1) ?? from }, ...(driverId && { driverId }) };
+  const match = { day: { $gte: from, $lte: days.at(-1) ?? from }, driverId: { $in: list.map((driver) => driver._id) } };
+  // The super admin's report says which admin each driver belongs to.
+  const adminNames = admin.isSuper
+    ? new Map((await admins.find().toArray()).map((item) => [String(item._id), item.name]))
+    : null;
 
   await fillMissingPlaces(match, FILL_LIMIT);
   const shots = await photos
@@ -73,7 +78,7 @@ export async function GET(request) {
 
   // One row per driver per day. Each entry gets its own columns, so a day with more photos is wider.
   const most = Math.max(0, ...shifts.map((shift) => shift.dayShots.length));
-  const header = ['Driver', 'Mobile', 'Vehicle', 'Date', 'Attendance', 'Status', 'Start time', 'End time', 'Hours', 'Photos', 'Flags'];
+  const header = ['Driver', 'Mobile', 'Vehicle', ...(adminNames ? ['Admin'] : []), 'Date', 'Attendance', 'Status', 'Start time', 'End time', 'Hours', 'Photos', 'Flags'];
   for (let n = 1; n <= most; n++) header.push(`Photo ${n}`, `Photo ${n} map`);
 
   const rows = [header];
@@ -84,6 +89,7 @@ export async function GET(request) {
       driver.name,
       driver.phone,
       driver.vehicle,
+      ...(adminNames ? [adminNames.get(String(driver.adminId)) ?? 'Super Admin'] : []),
       day,
       summary.present ? 'Present' : 'Absent',
       STATUS_LABELS[summary.status],

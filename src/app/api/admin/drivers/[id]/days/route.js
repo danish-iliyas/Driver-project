@@ -1,14 +1,15 @@
 import { collections } from '@/lib/db';
 import { fail } from '@/lib/auth';
-import { adminOnly, parseId } from '@/lib/admin';
+import { ownDriver, parseId, requireAdmin } from '@/lib/admin';
 import { dayOf } from '@/lib/time';
 import { daySummary } from '@/lib/work';
 
 export async function GET(request, { params }) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
-  const driverId = parseId((await params).id);
-  if (!driverId) return fail(404, 'Not found');
+  const driver = await ownDriver(admin, parseId((await params).id));
+  if (!driver) return fail(404, 'Not found');
+  const driverId = driver._id;
 
   const today = dayOf(new Date());
   const requested = request.nextUrl.searchParams.get('month') ?? '';
@@ -16,9 +17,7 @@ export async function GET(request, { params }) {
   const [year, monthNumber] = month.split('-').map(Number);
   const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
 
-  const { drivers, photos } = await collections();
-  const driver = await drivers.findOne({ _id: driverId });
-  if (!driver) return fail(404, 'Not found');
+  const { photos } = await collections();
   const entries = await photos
     .find(
       { driverId, day: { $gte: `${month}-01`, $lte: `${month}-31` } },

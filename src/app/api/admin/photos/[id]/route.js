@@ -1,17 +1,15 @@
 import { collections } from '@/lib/db';
 import { fail } from '@/lib/auth';
-import { adminOnly, clean, entryTime, parseId } from '@/lib/admin';
+import { clean, entryTime, ownPhoto, parseId, requireAdmin } from '@/lib/admin';
 import { WORK_LABELS } from '@/lib/work';
 
 export async function PATCH(request, { params }) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
-  const _id = parseId((await params).id);
-  if (!_id) return fail(404, 'Not found');
-
-  const { photos } = await collections();
-  const photo = await photos.findOne({ _id });
+  const photo = await ownPhoto(admin, parseId((await params).id));
   if (!photo) return fail(404, 'Not found');
+  const { _id } = photo;
+  const { photos } = await collections();
 
   const body = await request.json().catch(() => ({}));
   const set = {};
@@ -35,10 +33,11 @@ export async function PATCH(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
-  const _id = parseId((await params).id);
-  if (!_id) return fail(404, 'Not found');
+  const photo = await ownPhoto(admin, parseId((await params).id));
+  if (!photo) return fail(404, 'Not found');
+  const { _id } = photo;
 
   const { photos, photoBlobs } = await collections();
   const { deletedCount } = await photos.deleteOne({ _id });

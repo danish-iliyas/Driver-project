@@ -17,6 +17,6 @@ export async function POST(request) {
     return fail(401, 'Wrong mobile number or PIN. Forgot PIN? Ask admin.');
   }
   await clearFails(key);
-  await startSession('driver', driver._id);
+  await startSession('driver', { driverId: driver._id });
   return Response.json({ id: driver._id, name: driver.name, vehicle: driver.vehicle });
 }

@@ -117,6 +117,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 .toast.bad { background: var(--red); }
 
 .warn { margin: 0; padding: 12px 14px; border-radius: 14px; background: rgba(255, 181, 71, 0.14); color: var(--amber); font-size: 17px; font-weight: 500; }
+.tracking { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; color: var(--green); font-size: 16px; font-weight: 500; }
+.tracking .dot { width: 9px; height: 9px; background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .tracking .dot { animation: none; } }
 .help { display: grid; gap: 8px; padding: 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--red); font-size: 17px; }
 .help p { margin: 0; }
 .last-sent { margin: 0; text-align: center; color: var(--muted); font-size: 16px; }
@@ -177,6 +181,11 @@ input[type='date'], input[type='month'] { padding: 9px 12px; border-radius: 12px
 .time-input { display: flex; align-items: center; gap: 6px; }
 .time-input b { color: var(--text); }
 .field .time-input select { flex: 1; }
+.field.inline { grid-auto-flow: column; align-items: center; gap: 10px; }
+.field.inline select { width: auto; min-width: 180px; padding: 9px 12px; }
+.panel h2 .legend { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 400; }
+td .note.late { color: var(--amber); }
+.cell-select { padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font: inherit; font-size: 14px; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; padding-bottom: 12px; }
 .check input { width: 18px; height: 18px; accent-color: var(--gold); }
 td .note { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }

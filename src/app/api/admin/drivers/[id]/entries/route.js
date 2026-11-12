@@ -1,15 +1,16 @@
 import crypto from 'node:crypto';
 import { collections } from '@/lib/db';
 import { fail } from '@/lib/auth';
-import { adminOnly, clean, entryTime, parseId, validDay } from '@/lib/admin';
+import { clean, entryTime, ownDriver, parseId, requireAdmin, validDay } from '@/lib/admin';
 import { WORK_LABELS } from '@/lib/work';
 
 // Lets the admin add what a driver forgot. These entries have no photo and no location.
 export async function POST(request, { params }) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
-  const driverId = parseId((await params).id);
-  if (!driverId) return fail(404, 'Not found');
+  const driver = await ownDriver(admin, parseId((await params).id));
+  if (!driver) return fail(404, 'Not found');
+  const driverId = driver._id;
 
   const body = await request.json().catch(() => ({}));
   if (!(body.type in WORK_LABELS)) return fail(400, 'Choose the work');
@@ -17,8 +18,7 @@ export async function POST(request, { params }) {
   const capturedAt = entryTime(body.day, body.time, body.nextDay);
   if (typeof capturedAt === 'string') return fail(400, capturedAt);
 
-  const { drivers, photos } = await collections();
-  if (!(await drivers.findOne({ _id: driverId }, { projection: { _id: 1 } }))) return fail(404, 'Not found');
+  const { photos } = await collections();
   await photos.insertOne({
     driverId,
     clientId: `admin-${crypto.randomUUID()}`,

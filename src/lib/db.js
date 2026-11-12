@@ -1,5 +1,8 @@
 import { MongoClient } from 'mongodb';
 
+// Live location points are small but many, so they are kept for 35 days only.
+const TRACK_KEEP_SECONDS = 35 * 24 * 60 * 60;
+
 async function connect() {
   const client = new MongoClient(process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017');
   await client.connect();
@@ -13,6 +16,11 @@ async function connect() {
     db.collection('photos').createIndex({ driverId: 1, day: 1, capturedAt: 1 }),
     db.collection('photos').createIndex({ day: 1, capturedAt: 1 }),
     db.collection('photos').createIndex({ driverId: 1, capturedAt: -1 }),
+    db.collection('admins').createIndex({ username: 1 }, { unique: true }),
+    db.collection('drivers').createIndex({ adminId: 1 }),
+    db.collection('tracks').createIndex({ driverId: 1, day: 1, at: 1 }),
+    db.collection('tracks').createIndex({ driverId: 1, pointId: 1 }, { unique: true }),
+    db.collection('tracks').createIndex({ at: 1 }, { expireAfterSeconds: TRACK_KEEP_SECONDS }),
   ]);
   return db;
 }
@@ -30,12 +38,14 @@ export function getDb() {
 export async function collections() {
   const db = await getDb();
   return {
+    admins: db.collection('admins'),
     drivers: db.collection('drivers'),
     sessions: db.collection('sessions'),
     loginFails: db.collection('loginFails'),
     photos: db.collection('photos'),
     photoBlobs: db.collection('photoBlobs'),
     places: db.collection('places'),
+    tracks: db.collection('tracks'),
   };
 }
 

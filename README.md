@@ -2,6 +2,16 @@
 
 Drivers log in on their phone, start work with a photo, send Loading, Unloading, Breakdown or Other photos, and end work with a photo. Each photo saves the time and GPS location. Drivers can see their own attendance, hours and photos for the last 30 days. The admin sees status, breakdown alerts, routes on a map, photos and a report, and can add, edit or delete any entry. All times use Dubai time and a 24 hour clock. A night shift belongs to the date it started: entries after midnight stay on that date while the shift is open (up to 18 hours after START), and the admin can add an entry for "Next day" when a driver forgot END after midnight. The report has one row per driver per day, with a column for each photo.
 
+## Admins
+
+- The login in `.env` (`ADMIN_USERNAME`, `ADMIN_PASSWORD`) is the Super Admin. It sees all drivers, adds admins in the Admins tab, and gives drivers to an admin in the Drivers tab.
+- Each admin logs in at the same `/admin` page and sees and manages only their own drivers. A driver an admin adds belongs to that admin.
+- Drivers that belong to no admin are the Super Admin's own.
+
+## Live location
+
+From START WORK to END WORK the driver app sends the phone's location every 5 minutes, only while the app is open on the screen. The admin sees these points as a route on the driver's day page, and "Last seen" on the dashboard. Points are kept for 35 days.
+
 ## Run on this computer
 
 1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD` (minimum 10 characters).

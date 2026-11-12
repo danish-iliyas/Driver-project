@@ -34,14 +34,15 @@ export async function clearFails(key) {
   await loginFails.deleteOne({ _id: key });
 }
 
-export async function startSession(role, driverId = null) {
+// fields: { driverId } for a driver, { adminId } for an admin (null adminId = super admin).
+export async function startSession(role, fields) {
   const { sessions } = await collections();
   const token = crypto.randomBytes(32).toString('base64url');
   const maxAge = SESSION_MS[role];
   await sessions.insertOne({
     _id: hashToken(token),
     role,
-    driverId,
+    ...fields,
     expiresAt: new Date(Date.now() + maxAge),
   });
   (await cookies()).set(COOKIE, token, {
@@ -66,6 +67,11 @@ export async function endSession() {
 export async function endDriverSessions(driverId) {
   const { sessions } = await collections();
   await sessions.deleteMany({ driverId });
+}
+
+export async function endAdminSessions(adminId) {
+  const { sessions } = await collections();
+  await sessions.deleteMany({ role: 'admin', adminId });
 }
 
 export async function getSession(role) {

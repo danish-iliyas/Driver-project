@@ -1,14 +1,14 @@
 import bcrypt from 'bcryptjs';
 import { collections } from '@/lib/db';
 import { endDriverSessions, fail } from '@/lib/auth';
-import { adminOnly, clean, parseId, PIN_ROUNDS, validPhone, validPin } from '@/lib/admin';
+import { adminIdFrom, clean, ownDriver, parseId, PIN_ROUNDS, requireAdmin, validPhone, validPin } from '@/lib/admin';
 import { normalizePhone } from '@/lib/phone';
 
 export async function PATCH(request, { params }) {
-  const denied = await adminOnly();
+  const { admin, denied } = await requireAdmin();
   if (denied) return denied;
   const _id = parseId((await params).id);
-  if (!_id) return fail(404, 'Not found');
+  if (!(await ownDriver(admin, _id))) return fail(404, 'Not found');
 
   const body = await request.json().catch(() => ({}));
   const set = {};
@@ -16,6 +16,11 @@ export async function PATCH(request, { params }) {
   if ('vehicle' in body) set.vehicle = clean(body.vehicle).toUpperCase();
   if ('phone' in body) set.phone = normalizePhone(body.phone);
   if ('active' in body) set.active = Boolean(body.active);
+  if ('adminId' in body) {
+    if (!admin.isSuper) return fail(403, 'Only the super admin can do this');
+    set.adminId = await adminIdFrom(body.adminId);
+    if (set.adminId === undefined) return fail(400, 'Choose the admin');
+  }
   if ('pin' in body) {
     if (!validPin(String(body.pin))) return fail(400, 'PIN must be 4 digits');
     set.pinHash = await bcrypt.hash(String(body.pin), PIN_ROUNDS);
